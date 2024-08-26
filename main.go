@@ -1,139 +1,146 @@
 package main
 
 import (
-    "encoding/json"
-    "fmt"
-    "os"
-    "quake-log-parser/parser"
-    "sort"
-    "strconv"
+        "encoding/json"
+        "fmt"
+        "os"
+        "quake-log-parser/parser"
+        "sort"
+        "strconv"
 )
 
-// Game represents the structure holding the game data.
 type Game struct {
-    TotalKills   int            // TotalKills is the total number of kills in a game.
-    Players      map[string]bool // Players is a set of unique player names in the game.
-    Kills        map[string]int // Kills maps each player to the number of kills they have.
-    KillsByMeans map[string]int // KillsByMeans maps the kill methods to their corresponding counts.
+        TotalKills   int               // Total number of kills in the game
+        Players      map[string]bool   // Set of unique players in the game
+        Kills        map[string]int    // Map of player names to their respective kill counts
+        KillsByMeans map[string]int    // Map of kill means (e.g., weapon type) to their respective counts
 }
 
-// ReportGenerator is responsible for generating various reports from the game data.
 type ReportGenerator struct {
-    Games map[int]Game // Games is a map of all games indexed by their game number.
+        Games map[int]Game             // Map of game numbers to their corresponding Game data
 }
 
-// generateMatchReports generates a detailed report of each match.
-// It returns a map where the key is the game identifier and the value is the match details.
+// generateMatchReports generates a report for each match, including total kills, players, and individual player kills.
 func (rg *ReportGenerator) generateMatchReports() map[string]interface{} {
-    matchReports := make(map[string]interface{})
-    for gameNumber, game := range rg.Games {
-        gameKey := fmt.Sprintf("game_%02d", gameNumber) // Formats the game number as "game_XX".
-        matchReports[gameKey] = map[string]interface{}{
-            "total_kills": game.TotalKills,     // Total number of kills in the game.
-            "players":     getPlayersList(game.Players), // List of players in the game.
-            "kills":       game.Kills,          // Mapping of players to their kill counts.
+        matchReports := make(map[string]interface{})
+        for gameNumber, game := range rg.Games {
+                gameKey := fmt.Sprintf("game_%02d", gameNumber) // Format game number as "game_XX"
+                matchReports[gameKey] = map[string]interface{}{
+                        "total_kills": game.TotalKills,       // Total kills in the match
+                        "players":     getPlayersList(game.Players), // List of players in the match
+                        "kills":       game.Kills,            // Kill counts per player
+                }
         }
-    }
-    return matchReports
+        return matchReports
 }
 
-// generateKillByMeansReport generates a report of kills by the means used (e.g., weapons).
-// It returns a map where the key is the game identifier and the value is the kill methods breakdown.
+// generateKillByMeansReport generates a report for each match showing the number of kills by different means (e.g., weapons).
 func (rg *ReportGenerator) generateKillByMeansReport() map[string]interface{} {
-    meansReports := make(map[string]interface{})
-    for gameNumber, game := range rg.Games {
-        gameKey := fmt.Sprintf("game_%02d", gameNumber) // Formats the game number as "game_XX".
-        meansReports[gameKey] = map[string]interface{}{
-            "kills_by_means": game.KillsByMeans, // Mapping of kill methods to their counts.
+        meansReports := make(map[string]interface{})
+        for gameNumber, game := range rg.Games {
+                gameKey := fmt.Sprintf("game_%02d", gameNumber) // Format game number as "game_XX"
+                meansReports[gameKey] = map[string]interface{}{
+                        "kills_by_means": game.KillsByMeans, // Kills categorized by means
+                }
         }
-    }
-    return meansReports
+        return meansReports
 }
 
-// getPlayersList converts the set of players (a map) to a sorted slice of player names.
+// generatePlayerRanking generates a ranking of players based on their total kills across all games.
+func (rg *ReportGenerator) generatePlayerRanking() []map[string]interface{} {
+        playerScores := make(map[string]int)
+        for _, game := range rg.Games {
+                for player, kills := range game.Kills {
+                        playerScores[player] += kills // Accumulate kills for each player
+                }
+        }
+
+        // Sort players by total kills in descending order
+        sortedPlayers := make([]map[string]interface{}, 0, len(playerScores))
+        for player, kills := range playerScores {
+                sortedPlayers = append(sortedPlayers, map[string]interface{}{
+                        "player": player,
+                        "kills":  kills,
+                })
+        }
+        sort.Slice(sortedPlayers, func(i, j int) bool {
+                return sortedPlayers[i]["kills"].(int) > sortedPlayers[j]["kills"].(int) // Sort by kills descending
+        })
+
+        return sortedPlayers
+}
+
+// saveReportsAsJSON saves the generated reports as a JSON file with proper formatting.
+func (rg *ReportGenerator) saveReportsAsJSON(matchReports, meansReports map[string]interface{}, playerRanking []map[string]interface{}, filename string) error {
+        outputData := map[string]interface{}{
+                "match_reports":        matchReports,        // Reports for each match
+                "kill_by_means_reports": meansReports,        // Reports for kills by means
+                "player_ranking":       playerRanking,        // Player ranking report
+        }
+
+        file, err := os.Create(filename) // Create a new file to save the JSON data
+        if err != nil {
+                return err
+        }
+        defer file.Close() // Ensure the file is closed after writing
+
+        encoder := json.NewEncoder(file)
+        encoder.SetIndent("", "  ") // Format JSON with indentation for readability
+        return encoder.Encode(outputData) // Write the JSON data to the file
+}
+
+// getPlayersList converts the map of players to a sorted list of player names.
 func getPlayersList(players map[string]bool) []string {
-    playerList := make([]string, 0, len(players))
-    for player := range players {
-        playerList = append(playerList, player) // Append each player name to the list.
-    }
-    sort.Strings(playerList) // Sort the player names alphabetically.
-    return playerList
+        playerList := make([]string, 0, len(players))
+        for player := range players {
+                playerList = append(playerList, player)
+        }
+        sort.Strings(playerList) // Sort the players alphabetically for consistency
+        return playerList
 }
 
-// parseGameLog processes the game log file, extracting game data and populating the report generator.
-func parseGameLog(filepath string) (*ReportGenerator, error) {
-    logParser, err := parser.NewParser(filepath)
-    if err != nil {
-        return nil, fmt.Errorf("failed to create log parser: %w", err) // Error handling if parser creation fails.
-    }
-
-    rg := &ReportGenerator{
-        Games: make(map[int]Game),
-    }
-
-    gameNumber := 0
-    for logParser.Scan() {
-        event := logParser.Event()
-
-        // If a new game starts, increment the game number and initialize the game data structure.
-        if event.Type == parser.EventTypeInitGame {
-            gameNumber++
-            rg.Games[gameNumber] = Game{
-                Players:      make(map[string]bool),
-                Kills:        make(map[string]int),
-                KillsByMeans: make(map[string]int),
-            }
-        }
-
-        // Handle different event types related to kills and player connections.
-        game := rg.Games[gameNumber]
-        switch event.Type {
-        case parser.EventTypeKill:
-            game.TotalKills++
-            game.Kills[event.Killer]++
-            game.KillsByMeans[event.MeanOfDeath]++
-        case parser.EventTypeClientUserinfoChanged:
-            game.Players[event.PlayerName] = true
-        }
-
-        rg.Games[gameNumber] = game
-    }
-
-    if err := logParser.Err(); err != nil {
-        return nil, fmt.Errorf("error occurred during log parsing: %w", err) // Error handling if log parsing fails.
-    }
-
-    return rg, nil
-}
-
-// main function is the entry point of the application.
-// It reads the log file path from command line arguments, parses the log, generates reports, and outputs them as JSON.
 func main() {
-    if len(os.Args) < 2 {
-        fmt.Println("Usage: quake-log-parser <logfile>")
-        os.Exit(1)
-    }
+        // Define the path to the log file to be parsed
+        logFilePath := "logs/quake_game.log"
+        
+        // Parse the log file to extract match data
+        matches, err := parser.ParseLogFile(logFilePath)
+        if err != nil {
+                fmt.Println("Error parsing log file:", err)
+                return
+        }
 
-    logfile := os.Args[1]
-    rg, err := parseGameLog(logfile)
-    if err != nil {
-        fmt.Printf("Error parsing game log: %v\n", err)
-        os.Exit(1)
-    }
+        // Convert parsed matches into Game structures
+        games := make(map[int]Game)
+        for matchNumber, matchData := range matches {
+                gameNumber, err := strconv.Atoi(matchNumber[5:]) // Extract the game number from the match identifier
+                if err != nil {
+                        fmt.Println("Error parsing game number:", err)
+                        continue
+                }
+                game := Game{
+                        TotalKills:   matchData.TotalKills,   // Total kills recorded in the match
+                        Players:      matchData.Players,      // Players who participated in the match
+                        Kills:        matchData.Kills,        // Kill counts per player
+                        KillsByMeans: matchData.KillsByMeans, // Kill counts categorized by means (e.g., weapons)
+                }
+                games[gameNumber] = game
+        }
 
-    matchReports := rg.generateMatchReports()
-    meansReports := rg.generateKillByMeansReport()
+        // Instantiate a ReportGenerator with the parsed game data
+        reportGen := ReportGenerator{Games: games}
 
-    combinedReports := map[string]interface{}{
-        "match_reports":      matchReports,      // Detailed match reports.
-        "kill_by_means_report": meansReports,    // Kills by means reports.
-    }
+        // Generate the match reports, kills by means reports, and player ranking
+        matchReports := reportGen.generateMatchReports()
+        meansReports := reportGen.generateKillByMeansReport()
+        playerRanking := reportGen.generatePlayerRanking()
 
-    jsonData, err := json.MarshalIndent(combinedReports, "", "  ")
-    if err != nil {
-        fmt.Printf("Error generating JSON: %v\n", err)
-        os.Exit(1)
-    }
+        // Save the generated reports to a JSON file
+        err = reportGen.saveReportsAsJSON(matchReports, meansReports, playerRanking, "quake_report.json")
+        if err != nil {
+                fmt.Println("Error saving JSON report:", err)
+                return
+        }
 
-    fmt.Println(string(jsonData)) // Output the generated JSON to stdout.
+        fmt.Println("Report generated successfully in quake_report.json") // Confirm successful report generation
 }
