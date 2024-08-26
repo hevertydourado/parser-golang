@@ -103,5 +103,4 @@ Kills by Means:
 ## License
 
 None.
-```
 
