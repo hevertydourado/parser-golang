@@ -1,83 +1,124 @@
 package main
 
 import (
-	"bufio"
-	"encoding/json"
-	"fmt"
-	"io/ioutil"
-	"os"
-	"sort"
-	"strconv"
-	"strings"
+    "encoding/json"
+    "fmt"
+    "io/ioutil"
+    "log"
+    "sort"
+    "strings"
 )
 
+// Report represents the entire structure of the parsed JSON data.
+type Report struct {
+    KillByMeansReports map[string]KillByMeansReport `json:"kill_by_means_reports"`
+    MatchReports       map[string]MatchReport       `json:"match_reports"`
+    PlayerRanking      []PlayerRanking              `json:"player_ranking"`
+}
+
+// KillByMeansReport represents the kills by means for a specific game.
+type KillByMeansReport struct {
+    KillsByMeans map[string]int `json:"kills_by_means"`
+}
+
+// MatchReport represents the report of a specific match.
 type MatchReport struct {
-	TotalKills   int            `json:"total_kills"`
-	Players      []string       `json:"players"`
-	Kills        map[string]int `json:"kills"`
+    TotalKills int               `json:"total_kills"`
+    Players    []string          `json:"players"`
+    Kills      map[string]int    `json:"kills"`
 }
 
-type Output struct {
-	Reports       map[string]MatchReport `json:"reports"`
-	PlayerRanking []map[string]interface{} `json:"player_ranking"`
+// PlayerRanking represents the ranking of players based on their kills.
+type PlayerRanking struct {
+    Player string `json:"player"`
+    Kills  int    `json:"kills"`
 }
 
+// main is the entry point of the program.
 func main() {
-	// Read the JSON file
-	data, err := ioutil.ReadFile("quake_report.json")
-	if err != nil {
-		fmt.Println("Error reading JSON file:", err)
-		return
-	}
+    // Load the JSON file containing the report data.
+    data, err := ioutil.ReadFile("quake_report.json")
+    if err != nil {
+        log.Fatalf("Failed to read JSON file: %s", err)
+    }
 
-	// Parse the JSON into our struct
-	var output Output
-	if err := json.Unmarshal(data, &output); err != nil {
-		fmt.Println("Error parsing JSON:", err)
-		return
-	}
+    // Parse the JSON data into the Report structure.
+    var report Report
+    err = json.Unmarshal(data, &report)
+    if err != nil {
+        log.Fatalf("Failed to parse JSON data: %s", err)
+    }
 
-	// Debug: Check if we have match reports
-	if len(output.Reports) == 0 {
-		fmt.Println("No match reports found in JSON.")
-		return
-	}
+    // Display the player ranking.
+    fmt.Println("===== Player Ranking =====")
+    displayPlayerRanking(report.PlayerRanking)
 
-	// Ask user how many games to display
-	fmt.Print("Enter the number of games to display (default is 10): ")
-	reader := bufio.NewReader(os.Stdin)
-	input, _ := reader.ReadString('\n')
-	input = strings.TrimSpace(input)
+    // Display the match reports.
+    fmt.Println("\n===== Match Reports =====")
+    for match, matchReport := range report.MatchReports {
+        displayMatchReport(match, matchReport)
+    }
 
-	numGames := 10
-	if input != "" {
-		if n, err := strconv.Atoi(input); err == nil && n > 0 {
-			numGames = n
-		} else {
-			fmt.Println("Invalid input. Using default value of 10.")
-		}
-	}
+    // Display the kill by means reports.
+    fmt.Println("\n===== Kill by Means Reports =====")
+    for game, killByMeansReport := range report.KillByMeansReports {
+        displayKillByMeansReport(game, killByMeansReport)
+    }
+}
 
-	// Extract and sort the game keys
-	gameKeys := make([]string, 0, len(output.Reports))
-	for game := range output.Reports {
-		gameKeys = append(gameKeys, game)
-	}
-	sort.Strings(gameKeys)
+// displayPlayerRanking prints the ranking of players in a formatted way.
+func displayPlayerRanking(rankings []PlayerRanking) {
+    // Sort players by the number of kills in descending order.
+    sort.Slice(rankings, func(i, j int) bool {
+        return rankings[i].Kills > rankings[j].Kills
+    })
 
-	// Display information for the first `numGames` matches
-	for i, game := range gameKeys {
-		if i >= numGames {
-			break
-		}
-		report := output.Reports[game]
-		fmt.Printf("Game: %s\n", game)
-		fmt.Printf("  Total Kills: %d\n", report.TotalKills)
-		fmt.Printf("  Players: %v\n", report.Players)
-		fmt.Println("  Kills:")
-		for player, kills := range report.Kills {
-			fmt.Printf("    %s: %d\n", player, kills)
-		}
-		fmt.Println()
-	}
+    // Print the player ranking.
+    for i, player := range rankings {
+        fmt.Printf("%d. %s - %d kills\n", i+1, player.Player, player.Kills)
+    }
+}
+
+// displayMatchReport prints the details of a specific match.
+func displayMatchReport(match string, report MatchReport) {
+    fmt.Printf("\nMatch: %s\n", match)
+    fmt.Printf("Total Kills: %d\n", report.TotalKills)
+    fmt.Printf("Players: %s\n", strings.Join(report.Players, ", "))
+
+    fmt.Println("Kills:")
+    // Sort players by kills in descending order for better readability.
+    sortedPlayers := sortKills(report.Kills)
+    for _, player := range sortedPlayers {
+        fmt.Printf("  %s: %d kills\n", player.Name, player.Kills)
+    }
+}
+
+// displayKillByMeansReport prints the kills by means for a specific game.
+func displayKillByMeansReport(game string, report KillByMeansReport) {
+    fmt.Printf("\nGame: %s\n", game)
+    fmt.Println("Kills by Means:")
+
+    // Sort the kill by means data by number of kills in descending order.
+    sortedMeans := sortKills(report.KillsByMeans)
+    for _, mean := range sortedMeans {
+        fmt.Printf("  %s: %d kills\n", mean.Name, mean.Kills)
+    }
+}
+
+// sortKills sorts a map of kills by the number of kills in descending order.
+func sortKills(kills map[string]int) []PlayerKill {
+    var sortedKills []PlayerKill
+    for name, kills := range kills {
+        sortedKills = append(sortedKills, PlayerKill{Name: name, Kills: kills})
+    }
+    sort.Slice(sortedKills, func(i, j int) bool {
+        return sortedKills[i].Kills > sortedKills[j].Kills
+    })
+    return sortedKills
+}
+
+// PlayerKill is a helper struct to hold player names and kill counts together.
+type PlayerKill struct {
+    Name  string
+    Kills int
 }
